@@ -251,7 +251,7 @@ class ResidualAttentionBlock(nn.Module):
         # as it will be added in the beginning, for both text and the vision branch
         self.text_layer = text_layer
         self.attn_mask = attn_mask
-        self.prompt_length_half = prompt_length//3
+        self.prompt_length_half = prompt_length//2
         #self.attn_prompt = ScaledDotProductAttention(scale=np.power(d_model, 0.5))
         if i ==0 and i<=prompt_depth:
             self.attn_prompt = nn.MultiheadAttention(d_model, 1)

@@ -54,19 +54,40 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 class MultiModalPromptLearner(nn.Module):
-    def __init__(self, prompt_length, prompt_depth, clip_model):
+    def __init__(self, prompt_length, prompt_depth, clip_model, fixed_vocab_list=None):
         super().__init__()
         dtype = clip_model.dtype
-        prompt_length_half = prompt_length//3 # use half length for generating static prompts, and the other for generating dynamic prompts
+        prompt_length_half = prompt_length//2 # use half length for generating static prompts, and the other for generating dynamic prompts
         # Default is 1, which is compound shallow prompting
         self.prompt_depth = prompt_depth  # max=12, but will create 11 such shared prompts
-        self.visual_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 768, dtype=dtype), std=0.02))
-        self.visual_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 768, dtype=dtype), std=0.02))
-        self.text_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 512, dtype=dtype), std=0.02))
-        self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 512, dtype=dtype), std=0.02))
-        self.common_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 512, dtype=dtype), std=0.02))
-        self.common_prompt_image = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 512, dtype=dtype), std=0.02))
-        self.common_prompt_text = nn.Parameter(nn.init.normal_(torch.empty(prompt_length_half, 512, dtype=dtype), std=0.02))
+
+        # ========== Fixed Vocabulary Embeddings ================
+        self.fixed_vocab_list = fixed_vocab_list
+        if self.fixed_vocab_list:
+            # Get token embeddings for fixed vocabulary
+            fixed_tokens = torch.cat([clip.tokenize(word, truncate=True) for word in self.fixed_vocab_list])
+            with torch.no_grad():
+                fixed_embeddings = clip_model.token_embedding(fixed_tokens).type(dtype)
+                # Extract the actual word embeddings (skip [SOS] token)
+                fixed_embeddings = fixed_embeddings[:, 1, :].squeeze(1)  # [num_fixed_words, embed_dim]
+            
+            # Register as buffer (won't be trained)
+            self.register_buffer('fixed_text_embeddings', fixed_embeddings)
+            self.num_fixed_tokens = len(self.fixed_vocab_list)
+        else:
+            self.num_fixed_tokens = 0
+        # ====================================================
+
+        # Fixed vocabulary embeddings will be added separately in the forward pass
+        trainable_prompt_length = prompt_length_half
+        
+        self.visual_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
+        self.visual_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
+        self.text_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        self.common_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        self.common_prompt_image = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        self.common_prompt_text = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         # Also make corresponding projection layers, for each prompt
         embed_dim_text = 512
         embed_dim_image = 768
@@ -87,16 +108,16 @@ class MultiModalPromptLearner(nn.Module):
                 )
         self.compound_prompt_projections_image = _get_clones(single_layer, self.prompt_depth)
         self.layernorm_image = nn.ModuleList([torch.nn.LayerNorm(embed_dim) for _ in range(self.prompt_depth)])
-        self.common_prompt_projection_image = nn.Sequential(
-                nn.Linear(embed_dim_text, embed_dim_text//r),
-                nn.GELU(),
-                nn.Linear(embed_dim_text//r, embed_dim_image),
-                )
-        self.common_prompt_projection_text = nn.Sequential(
-                nn.Linear(embed_dim_text, embed_dim_text//r),
-                nn.GELU(),
-                nn.Linear(embed_dim_text//r, embed_dim_text),
-                )
+        # self.common_prompt_projection_image = nn.Sequential(
+        #         nn.Linear(embed_dim_text, embed_dim_text//r),
+        #         nn.GELU(),
+        #         nn.Linear(embed_dim_text//r, embed_dim_image),
+        #         )
+        # self.common_prompt_projection_text = nn.Sequential(
+        #         nn.Linear(embed_dim_text, embed_dim_text//r),
+        #         nn.GELU(),
+        #         nn.Linear(embed_dim_text//r, embed_dim_text),
+        #         )
 
     def forward(self, missing_type):
 
@@ -127,14 +148,28 @@ class MultiModalPromptLearner(nn.Module):
                     self.compound_prompt_projections_image[index](self.layernorm_image[index](torch.cat([all_prompts_image[index-1][-1], all_prompts_text[index-1][-1]], -1))))
                 all_prompts_text[index].append(
                     self.compound_prompt_projections_text[index](self.layernorm_text[index](torch.cat([all_prompts_image[index-1][-1], all_prompts_text[index-1][-1]], -1))))
-            all_prompts_image[0][i] = torch.cat([
-                    all_prompts_image[0][i], 
-                    self.common_prompt_projection_image(common_prompt)]
-                    ,0)
-            all_prompts_text[0][i] = torch.cat([
-                    all_prompts_text[0][i], 
-                    self.common_prompt_projection_text(common_prompt)]
-                    ,0)
+            # all_prompts_image[0][i] = torch.cat([
+            #         all_prompts_image[0][i], 
+            #         self.common_prompt_projection_image(common_prompt)]
+            #         ,0)
+            # Handle fixed vocabulary embeddings by replacement instead of addition
+            # current_text_prompt = all_prompts_text[0][i]
+            
+            # if self.num_fixed_tokens > 0 and missing_type[i] == 1:  # text is missing
+            #     # Replace the first num_fixed_tokens prompts with fixed embeddings
+            #     if current_text_prompt.shape[0] >= self.num_fixed_tokens:
+            #         # Replace first few prompts with fixed embeddings
+            #         current_text_prompt = torch.cat([
+            #             self.fixed_text_embeddings,
+            #             current_text_prompt[self.num_fixed_tokens:]
+            #         ], dim=0)
+            #     else:
+            #         # If fixed tokens are more than current prompts, use fixed embeddings and pad if needed
+            #         current_text_prompt = self.fixed_text_embeddings[:current_text_prompt.shape[0]]
+            
+            # Add common prompt
+            # common_prompt_projected = self.common_prompt_projection_text(common_prompt)
+            # all_prompts_text[0][i] = torch.cat([current_text_prompt, common_prompt_projected], 0)
         # generate the prompts in each layer as a tensor [B, L, C]
         all_prompts_image = [torch.stack(prompts) for prompts in all_prompts_image]
         all_prompts_text = [torch.stack(prompts) for prompts in all_prompts_text]

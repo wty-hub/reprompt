@@ -16,3 +16,6 @@ torchmetrics==0.9.3
 torchvision==0.9.0
 tqdm==4.56.0
 transformers==4.2.1
+pydantic
+langchain
+langchain_openai

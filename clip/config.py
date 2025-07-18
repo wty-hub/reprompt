@@ -46,7 +46,10 @@ def config():
     # missing_aware_prompts config
     prompt_length = 36
     prompt_depth = 6
-        
+    
+    # Fixed vocabulary config
+    fixed_vocab_list = None  # 可以设置为 ['photo', 'image', 'picture', 'scene'] 等
+
     # Image setting
     train_transform_keys = ["CLIP_transform"]
     val_transform_keys = ["CLIP_transform"]
@@ -338,3 +341,18 @@ def vit32_base():
     hidden_size = 768
     num_heads = 12
     num_layers = 12
+
+
+# Named configs for "etc" which are orthogonal to "env" and "task", need to be added at the end
+
+@ex.named_config
+def with_fixed_vocab():
+    fixed_vocab_list = ['photo', 'image', 'picture', 'scene']
+
+@ex.named_config
+def with_food_vocab():
+    fixed_vocab_list = ["flavor", "ingredients", "cuisine"]
+
+@ex.named_config
+def with_emotion_vocab():
+    fixed_vocab_list = ['positive', 'negative', 'emotion', 'feeling']
