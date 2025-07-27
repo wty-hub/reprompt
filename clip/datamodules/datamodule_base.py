@@ -31,10 +31,13 @@ class BaseDataModule(LightningDataModule):
         if _config["test_ratio"] is not None:
             self.missing_info['ratio']['val'] = _config["test_ratio"]
             self.missing_info['ratio']['test'] = _config["test_ratio"]
+
         if _config["test_type"] is not None:
             self.missing_info['type']['val'] = _config["test_type"]
             self.missing_info['type']['test'] = _config["test_type"]
-            
+            # add for optimize
+            self.missing_info['type']['train'] = _config["test_type"]
+
         self.train_transform_keys = (
             ["default_train"]
             if len(_config["train_transform_keys"]) == 0

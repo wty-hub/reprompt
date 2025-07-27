@@ -113,25 +113,41 @@ ratios = [
 types = ["image", "text", "both"]
 
 max_value = {}
+max_path = {}
 
 for dataset in datasets:
     max_value[dataset] = {}
+    max_path[dataset] = {}
     for ratio in ratios:
         max_value[dataset][ratio] = {}
+        max_path[dataset][ratio] = {}
         for type in types:
             max_value[dataset][ratio][type] = -math.inf
+            max_path[dataset][ratio][type] = ""
 
 
 for root, dirs, files in os.walk("result"):
     mtch = re.search(pattern, root)
     if mtch:
-        dataaset = mtch.group(1)
+        dataset = mtch.group(1)
         ratio = float(mtch.group(2))
         type = mtch.group(3)
         for file in files:
             if 'metrics.csv' == file:
                 cur_max = find_max_value(os.path.join(root, file), 'val/the_metric')
                 if cur_max is not None:
-                    max_value[dataset][ratio][type] = max(cur_max, max_value[dataset][ratio][type])
-for key, value in max_value.items():
-    print(f'{key}\t{value}')
+                    if cur_max > max_value[dataset][ratio][type]:
+                        max_value[dataset][ratio][type] = cur_max
+                        max_path[dataset][ratio][type] = root
+
+for dataset in max_value:
+    print(f'\n=== {dataset} ===')
+    for ratio in max_value[dataset]:
+        print(f'  Ratio {ratio}:')
+        for type in max_value[dataset][ratio]:
+            value = max_value[dataset][ratio][type]
+            path = max_path[dataset][ratio][type]
+            if value > -math.inf:
+                print(f'    {type}: {value*100:.2f} -> {path}')
+            else:
+                print(f'    {type}: No data found')

@@ -54,7 +54,7 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 class MultiModalPromptLearner(nn.Module):
-    def __init__(self, prompt_length, prompt_depth, clip_model, fixed_vocab_list=None):
+    def __init__(self, prompt_length, prompt_depth, clip_model):
         super().__init__()
         dtype = clip_model.dtype
         prompt_length_half = prompt_length//2 # use half length for generating static prompts, and the other for generating dynamic prompts
@@ -62,7 +62,8 @@ class MultiModalPromptLearner(nn.Module):
         self.prompt_depth = prompt_depth  # max=12, but will create 11 such shared prompts
 
         # ========== Fixed Vocabulary Embeddings ================
-        self.fixed_vocab_list = fixed_vocab_list
+        # self.fixed_vocab_list = fixed_vocab_list
+        # print(f'fixed vocabs: {self.fixed_vocab_list}')
         if self.fixed_vocab_list:
             # Get token embeddings for fixed vocabulary
             fixed_tokens = torch.cat([clip.tokenize(word, truncate=True) for word in self.fixed_vocab_list])
@@ -78,13 +79,27 @@ class MultiModalPromptLearner(nn.Module):
             self.num_fixed_tokens = 0
         # ====================================================
 
-        # Fixed vocabulary embeddings will be added separately in the forward pass
+        # Fixed vocabulary embeddings will be integrated into text_prompt_missing
         trainable_prompt_length = prompt_length_half
         
         self.visual_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
         self.visual_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
         self.text_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
-        self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        
+        # # Create text_prompt_missing with fixed embeddings if available
+        # if self.fixed_vocab_list:
+        #     # Use fixed embeddings to replace part of the trainable prompt
+        #     remaining_prompt_length = max(0, trainable_prompt_length - self.num_fixed_tokens)
+        #     if remaining_prompt_length > 0:
+        #         text_prompt_missing_init = nn.init.normal_(torch.empty(remaining_prompt_length, 512, dtype=dtype), std=0.02)
+        #         combined_text_prompt_missing = torch.cat([fixed_embeddings, text_prompt_missing_init], dim=0)
+        #     else:
+        #         # If fixed tokens are more than or equal to prompt length, use only fixed embeddings
+        #         combined_text_prompt_missing = fixed_embeddings[:trainable_prompt_length]
+        #     self.text_prompt_missing = nn.Parameter(combined_text_prompt_missing)
+        # else:
+        #     self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
+        
         self.common_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         self.common_prompt_image = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         self.common_prompt_text = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
@@ -130,15 +145,12 @@ class MultiModalPromptLearner(nn.Module):
             if missing_type[i]==0:  # modality complete
                 initial_prompt_image = self.visual_prompt_complete
                 initial_prompt_text = self.text_prompt_complete
-                common_prompt = self.common_prompt_complete
             elif missing_type[i]==1:  # missing text 
                 initial_prompt_image = self.visual_prompt_complete
                 initial_prompt_text = self.text_prompt_missing
-                common_prompt = self.common_prompt_image
             elif missing_type[i]==2:  # missing image 
                 initial_prompt_image = self.visual_prompt_missing
                 initial_prompt_text = self.text_prompt_complete
-                common_prompt = self.common_prompt_text
             # generate the prompts of the first layer
             all_prompts_image[0].append(self.compound_prompt_projections_image[0](self.layernorm_image[0](torch.cat([initial_prompt_image, initial_prompt_text], -1))))
             all_prompts_text[0].append(self.compound_prompt_projections_text[0](self.layernorm_text[0](torch.cat([initial_prompt_image, initial_prompt_text], -1))))
@@ -148,37 +160,15 @@ class MultiModalPromptLearner(nn.Module):
                     self.compound_prompt_projections_image[index](self.layernorm_image[index](torch.cat([all_prompts_image[index-1][-1], all_prompts_text[index-1][-1]], -1))))
                 all_prompts_text[index].append(
                     self.compound_prompt_projections_text[index](self.layernorm_text[index](torch.cat([all_prompts_image[index-1][-1], all_prompts_text[index-1][-1]], -1))))
-            # all_prompts_image[0][i] = torch.cat([
-            #         all_prompts_image[0][i], 
-            #         self.common_prompt_projection_image(common_prompt)]
-            #         ,0)
-            # Handle fixed vocabulary embeddings by replacement instead of addition
-            # current_text_prompt = all_prompts_text[0][i]
-            
-            # if self.num_fixed_tokens > 0 and missing_type[i] == 1:  # text is missing
-            #     # Replace the first num_fixed_tokens prompts with fixed embeddings
-            #     if current_text_prompt.shape[0] >= self.num_fixed_tokens:
-            #         # Replace first few prompts with fixed embeddings
-            #         current_text_prompt = torch.cat([
-            #             self.fixed_text_embeddings,
-            #             current_text_prompt[self.num_fixed_tokens:]
-            #         ], dim=0)
-            #     else:
-            #         # If fixed tokens are more than current prompts, use fixed embeddings and pad if needed
-            #         current_text_prompt = self.fixed_text_embeddings[:current_text_prompt.shape[0]]
-            
-            # Add common prompt
-            # common_prompt_projected = self.common_prompt_projection_text(common_prompt)
-            # all_prompts_text[0][i] = torch.cat([current_text_prompt, common_prompt_projected], 0)
         # generate the prompts in each layer as a tensor [B, L, C]
         all_prompts_image = [torch.stack(prompts) for prompts in all_prompts_image]
         all_prompts_text = [torch.stack(prompts) for prompts in all_prompts_text]
         return all_prompts_image, all_prompts_text   
 
 class CustomCLIP(nn.Module):
-    def __init__(self, prompt_length, prompt_depth, clip_model):
+    def __init__(self, prompt_length, prompt_depth, clip_model, fixed_vocab_list=None):
         super().__init__()
-        self.prompt_learner = MultiModalPromptLearner(prompt_length, prompt_depth, clip_model)
+        self.prompt_learner = MultiModalPromptLearner(prompt_length, prompt_depth, clip_model, fixed_vocab_list)
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
@@ -202,7 +192,8 @@ class CLIPransformerSS(pl.LightningModule):
 
         print("Building custom CLIP")
         hidden_size = 512*2
-        self.model = CustomCLIP(config['prompt_length'], config['prompt_depth'], clip_model)
+        fixed_vocab_list = config.get('fixed_vocab_list', None)
+        self.model = CustomCLIP(config['prompt_length'], config['prompt_depth'], clip_model, fixed_vocab_list)
 
         # ===================== Downstream ===================== #
         if (
