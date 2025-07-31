@@ -287,7 +287,7 @@ class ResidualAttentionBlock(nn.Module):
                 if not (counter > len(compound_prompts_deeper) - 1):
                     # Remove the outputs produced by learnable tokens of previous layer
                     if not self.first_layer:
-                        visual_features = x[self.prompt_length_half*3:, :, :]
+                        visual_features = x[self.prompt_length_half*2:, :, :]
                     else:
                         visual_features = x
                     #prompts_dynamic = self.attn_prompt(self.prompts_dynamic.repeat(1, batch_size, 1).to(x.get_device()), visual_features, visual_features, mask=None)[0]
@@ -315,11 +315,11 @@ class ResidualAttentionBlock(nn.Module):
                 if not (counter > len(compound_prompts_deeper) - 1):
                     # Remove the outputs produced by learnable tokens of previous layer
                     if not self.first_layer:
-                        features = x[self.prompt_length_half*3:, :, :]
+                        features = x[self.prompt_length_half*2:, :, :]
                     else:
                         features = x
                     #prompts_dynamic = self.attn_prompt(self.prompts_dynamic.repeat(1, batch_size, 1).to(x.get_device()), texts_features, texts_features, mask=None)[0]
-                    prompts_dynamic_and_common = x[self.prompt_length_half:self.prompt_length_half*3, :, :]
+                    prompts_dynamic_and_common = x[self.prompt_length_half:self.prompt_length_half*2, :, :]
                     # Create/configure learnable tokens of this layer
                     prompts = compound_prompts_deeper[counter]  # extract the correct index
                     prompts = prompts.permute(1, 0, 2)

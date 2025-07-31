@@ -1,105 +1,30 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-import clip.modules.vision_transformer_prompts as vit
-import math
-from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
-from clip.modules import clip_utils, heads, objectives, clip
+from clip.modules.retriever import RetrievalPromptLearner
+from clip.modules import clip_utils, objectives, clip
 import copy
 
-def load_clip_to_cpu(backbone_name, prompt_length, prompt_depth):
-    url = clip._MODELS[backbone_name]
-    model_path = clip._download(url)
-
-    try:
-        # loading JIT archive
-        model = torch.jit.load(model_path, map_location="cpu")#.eval()
-        state_dict = None
-
-    except RuntimeError:
-        state_dict = torch.load(model_path, map_location="cpu")
-    model = vit.build_model(state_dict or model.state_dict(), prompt_length, prompt_depth)
-
-    return model
-
-class TextEncoder(nn.Module):
-    def __init__(self, clip_model):
-        super().__init__()
-        self.transformer = clip_model.transformer
-        self.token_embedding = clip_model.token_embedding
-        self.positional_embedding = clip_model.positional_embedding
-        self.ln_final = clip_model.ln_final
-        self.text_projection = clip_model.text_projection
-        self.dtype = clip_model.dtype
-        self.prompt_length = clip_model.prompt_length
-
-    def forward(self, tokenized_texts, all_prompts_text, missing_type):
-        x = self.token_embedding(tokenized_texts).type(self.dtype)  # [batch_size, n_ctx, d_model]
-        x = x + self.positional_embedding.type(self.dtype)
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        # Pass as the list, as nn.sequential cannot process multiple arguments in the forward pass
-        combined = [x, all_prompts_text, 0, missing_type]  # third argument is the counter which denotes depth of prompt
-        outputs = self.transformer(combined)
-        x = outputs[0][self.prompt_length:]  # extract the x back from here
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x).type(self.dtype)
-
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), tokenized_texts.argmax(dim=-1)] @ self.text_projection
-
-        return x
+from clip.modules.utils import TextEncoder, load_clip_to_cpu
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 class MultiModalPromptLearner(nn.Module):
-    def __init__(self, prompt_length, prompt_depth, clip_model):
+    def __init__(self, prompt_length, prompt_depth, clip_model, residual_length):
         super().__init__()
         dtype = clip_model.dtype
         prompt_length_half = prompt_length//2 # use half length for generating static prompts, and the other for generating dynamic prompts
         # Default is 1, which is compound shallow prompting
         self.prompt_depth = prompt_depth  # max=12, but will create 11 such shared prompts
 
-        # ========== Fixed Vocabulary Embeddings ================
-        # self.fixed_vocab_list = fixed_vocab_list
-        # print(f'fixed vocabs: {self.fixed_vocab_list}')
-        if self.fixed_vocab_list:
-            # Get token embeddings for fixed vocabulary
-            fixed_tokens = torch.cat([clip.tokenize(word, truncate=True) for word in self.fixed_vocab_list])
-            with torch.no_grad():
-                fixed_embeddings = clip_model.token_embedding(fixed_tokens).type(dtype)
-                # Extract the actual word embeddings (skip [SOS] token)
-                fixed_embeddings = fixed_embeddings[:, 1, :].squeeze(1)  # [num_fixed_words, embed_dim]
-            
-            # Register as buffer (won't be trained)
-            self.register_buffer('fixed_text_embeddings', fixed_embeddings)
-            self.num_fixed_tokens = len(self.fixed_vocab_list)
-        else:
-            self.num_fixed_tokens = 0
-        # ====================================================
-
         # Fixed vocabulary embeddings will be integrated into text_prompt_missing
-        trainable_prompt_length = prompt_length_half
+        trainable_prompt_length = prompt_length_half - residual_length
         
         self.visual_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
         self.visual_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 768, dtype=dtype), std=0.02))
         self.text_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
-        
-        # # Create text_prompt_missing with fixed embeddings if available
-        # if self.fixed_vocab_list:
-        #     # Use fixed embeddings to replace part of the trainable prompt
-        #     remaining_prompt_length = max(0, trainable_prompt_length - self.num_fixed_tokens)
-        #     if remaining_prompt_length > 0:
-        #         text_prompt_missing_init = nn.init.normal_(torch.empty(remaining_prompt_length, 512, dtype=dtype), std=0.02)
-        #         combined_text_prompt_missing = torch.cat([fixed_embeddings, text_prompt_missing_init], dim=0)
-        #     else:
-        #         # If fixed tokens are more than or equal to prompt length, use only fixed embeddings
-        #         combined_text_prompt_missing = fixed_embeddings[:trainable_prompt_length]
-        #     self.text_prompt_missing = nn.Parameter(combined_text_prompt_missing)
-        # else:
-        #     self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
-        
+        self.text_prompt_missing = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         self.common_prompt_complete = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         self.common_prompt_image = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
         self.common_prompt_text = nn.Parameter(nn.init.normal_(torch.empty(trainable_prompt_length, 512, dtype=dtype), std=0.02))
@@ -123,18 +48,8 @@ class MultiModalPromptLearner(nn.Module):
                 )
         self.compound_prompt_projections_image = _get_clones(single_layer, self.prompt_depth)
         self.layernorm_image = nn.ModuleList([torch.nn.LayerNorm(embed_dim) for _ in range(self.prompt_depth)])
-        # self.common_prompt_projection_image = nn.Sequential(
-        #         nn.Linear(embed_dim_text, embed_dim_text//r),
-        #         nn.GELU(),
-        #         nn.Linear(embed_dim_text//r, embed_dim_image),
-        #         )
-        # self.common_prompt_projection_text = nn.Sequential(
-        #         nn.Linear(embed_dim_text, embed_dim_text//r),
-        #         nn.GELU(),
-        #         nn.Linear(embed_dim_text//r, embed_dim_text),
-        #         )
 
-    def forward(self, missing_type):
+    def forward(self, missing_type, residual_prompts):
 
         # Before returning, need to transform
         # prompts to 768 for the visual side
@@ -143,14 +58,26 @@ class MultiModalPromptLearner(nn.Module):
         for i in range(len(missing_type)):
             # set initial prompts for each modality
             if missing_type[i]==0:  # modality complete
-                initial_prompt_image = self.visual_prompt_complete
-                initial_prompt_text = self.text_prompt_complete
+                initial_prompt_text = torch.cat((residual_prompts[0][i], self.text_prompt_complete), dim=0)
+                initial_prompt_image = torch.cat((residual_prompts[1][i], self.visual_prompt_complete), dim=0)
             elif missing_type[i]==1:  # missing text 
-                initial_prompt_image = self.visual_prompt_complete
-                initial_prompt_text = self.text_prompt_missing
+                initial_prompt_text = torch.cat((residual_prompts[0][i], self.text_prompt_missing), dim=0)
+                initial_prompt_image = torch.cat((residual_prompts[1][i], self.visual_prompt_complete), dim=0)
             elif missing_type[i]==2:  # missing image 
-                initial_prompt_image = self.visual_prompt_missing
-                initial_prompt_text = self.text_prompt_complete
+                initial_prompt_text = torch.cat((residual_prompts[0][i], self.text_prompt_complete), dim=0)
+                initial_prompt_image = torch.cat((residual_prompts[1][i], self.visual_prompt_missing), dim=0)
+            
+            # Add retrieved prompt if available (replacing part of initial prompts)
+            # retrieved = retrieved_prompt[i]
+            # if retrieved is not None:
+                # Replace part of initial prompts with retrieved prompts for missing modalities
+                # if missing_type[i] == 1:  # missing text
+                    # replace_length = min(retrieved.shape[0], initial_prompt_text.shape[0])
+                    # initial_prompt_text = torch.cat((retrieved[:replace_length], initial_prompt_text[replace_length:]), dim=0)
+                # elif missing_type[i] == 2:  # missing image
+                    # replace_length = min(retrieved.shape[0], initial_prompt_image.shape[0])
+                    # initial_prompt_image = torch.cat((retrieved[:replace_length], initial_prompt_image[replace_length:]), dim=0)
+
             # generate the prompts of the first layer
             all_prompts_image[0].append(self.compound_prompt_projections_image[0](self.layernorm_image[0](torch.cat([initial_prompt_image, initial_prompt_text], -1))))
             all_prompts_text[0].append(self.compound_prompt_projections_text[0](self.layernorm_text[0](torch.cat([initial_prompt_image, initial_prompt_text], -1))))
@@ -166,19 +93,20 @@ class MultiModalPromptLearner(nn.Module):
         return all_prompts_image, all_prompts_text   
 
 class CustomCLIP(nn.Module):
-    def __init__(self, prompt_length, prompt_depth, clip_model, fixed_vocab_list=None):
+    def __init__(self, prompt_length, prompt_depth, clip_model, augmenter: RetrievalPromptLearner, residual_length):
         super().__init__()
-        self.prompt_learner = MultiModalPromptLearner(prompt_length, prompt_depth, clip_model, fixed_vocab_list)
+        self.prompt_learner = MultiModalPromptLearner(prompt_length, prompt_depth, clip_model, residual_length)
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
         self.dtype = clip_model.dtype
+        self.augmenter = augmenter
 
-    def forward(self, image, text, missing_type):
+    def forward(self, image, text, missing_type, idx, phase):
         tokenized_texts = torch.stack([clip.tokenize(tx, context_length=77, truncate=True) for tx in text[0]], 0).to(image.get_device()).squeeze(1)  # extract texts from the first key  # [b, 77]
         #logit_scale = self.logit_scale.exp()
-
-        all_prompts_image, all_prompts_text = self.prompt_learner(missing_type)
+        retrieved_prompt = self.augmenter.generate_prompts(idx, phase, missing_type)
+        all_prompts_image, all_prompts_text = self.prompt_learner(missing_type, retrieved_prompt)
         text_features = self.text_encoder(tokenized_texts, all_prompts_text, missing_type)
         image_features = self.image_encoder(image.type(self.dtype), all_prompts_image, missing_type)
         return torch.cat([image_features, text_features], -1)
@@ -192,8 +120,20 @@ class CLIPransformerSS(pl.LightningModule):
 
         print("Building custom CLIP")
         hidden_size = 512*2
-        fixed_vocab_list = config.get('fixed_vocab_list', None)
-        self.model = CustomCLIP(config['prompt_length'], config['prompt_depth'], clip_model, fixed_vocab_list)
+
+        # ===================== Retrieval augmenter ============ #
+        self.augmenter = RetrievalPromptLearner(
+            dataset_name=config['dataset'],
+            data_dir=config['data_root'],
+            prompt_length=config.get('augmented_length', 3),
+            missing_scenario=config['missing_type']['val'],
+            missing_ratio=config['test_ratio'],
+            remake=config.get('remake_retriever', False), # Optional: allow forcing remake from config
+        )
+
+        self.model = CustomCLIP(
+            config['prompt_length'], config['prompt_depth'], clip_model, self.augmenter, 
+            config.get('augmented_length', 3))
 
         # ===================== Downstream ===================== #
         if (
@@ -253,9 +193,11 @@ class CLIPransformerSS(pl.LightningModule):
     def infer(
         self,
         batch,
+        phase: str = "train"
     ):
         text = batch["text"]
         img = batch["image"][0]  # extract the first view (total 1)
+        idx = batch['arrow_index']
         if self.hparams.config["test_only"]:
             self.model.eval()
             if self.hparams.config["loss_names"]["hatememes"] > 0:
@@ -266,11 +208,11 @@ class CLIPransformerSS(pl.LightningModule):
             
             if self.hparams.config["loss_names"]["mmimdb"] > 0:
                 self.mmimdb_classifier.eval()
-        both_feats = self.model(img, text, batch["missing_type"])  
+        both_feats = self.model(img, text, batch["missing_type"], idx, phase)  
         feature_dim = both_feats.shape[1]//2
         for idx in range(len(img)):
             if batch["missing_type"][idx] == 0:
-                pass       
+                pass
             elif batch["missing_type"][idx] == 1:  # missing text
                 both_feats[idx, feature_dim:].zero_()
             elif batch["missing_type"][idx] == 2:
@@ -282,10 +224,10 @@ class CLIPransformerSS(pl.LightningModule):
 
         return ret
 
-    def forward(self, batch):
+    def forward(self, batch, phase="train"):
         ret = dict()
         if len(self.current_tasks) == 0:
-            ret.update(self.infer(batch))
+            ret.update(self.infer(batch, phase))
             return ret
 
         # Masked Language Modeling
@@ -316,7 +258,7 @@ class CLIPransformerSS(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         clip_utils.set_task(self)
-        output = self(batch)
+        output = self(batch, "train")
         total_loss = sum([v for k, v in output.items() if "loss" in k])
 
         return total_loss
@@ -326,7 +268,7 @@ class CLIPransformerSS(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         clip_utils.set_task(self)
-        output = self(batch)
+        output = self(batch, "val")
 
     def validation_epoch_end(self, outs):
         clip_utils.epoch_wrapup(self)
@@ -336,7 +278,7 @@ class CLIPransformerSS(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         clip_utils.set_task(self)
-        output = self(batch)
+        output = self(batch, "test")
         ret = dict()
 
         if self.hparams.config["loss_names"]["vqa"] > 0:

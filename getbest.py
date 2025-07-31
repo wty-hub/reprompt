@@ -95,12 +95,13 @@ import math
 import os
 import re
 
-pattern = rf'{Path.cwd().name}-(mmimdb|Food101|Hatefull_Memes)-(-?\d+\.\d+)-(both|image|text).*'
+pattern = rf'{Path.cwd().name}-(mmimdb|food101|hatememes)-(-?\d+\.\d+)-(both|image|text).*'
 
 # 数据集s
 datasets = [
     # "mmimdb",
-    "Food101",
+    "food101",
+    # "hatememes"
     # "Hatefull_Memes",
 ]
 # 缺失率s

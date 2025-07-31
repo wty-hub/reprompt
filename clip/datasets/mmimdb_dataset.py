@@ -93,4 +93,5 @@ class MMIMDBDataset(BaseDataset):
             "text": text,
             "label": labels,
             "missing_type": self.missing_table[image_index].item()+simulate_missing_type,
+            "arrow_index": image_index,
         }

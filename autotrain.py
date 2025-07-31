@@ -7,8 +7,8 @@ from pathlib import Path
 # 数据集及其任务名
 datasets = [
     # ("mmimdb", "task_finetune_mmimdb"),
-    ("Food101", "task_finetune_food101"),
-    # ("Hatefull_Memes", "task_finetune_hatememes"),
+    ("food101", "task_finetune_food101"),
+    # ("hatememes", "task_finetune_hatememes"),
 ]
 
 # 缺失率
@@ -31,8 +31,8 @@ max_epochs = 10
 # 数据集根目录
 data_roots = {
     "mmimdb": "../arrow_datasets/mmimdb",
-    "Food101": "../arrow_datasets/Food101",
-    "Hatefull_Memes": "../arrow_datasets/hateful_memes",
+    "food101": "../arrow_datasets/Food101",
+    "hatememes": "../arrow_datasets/hateful_memes",
 }
 
 # 训练命令模板
@@ -80,6 +80,7 @@ if __name__ == "__main__":
                     cmd = (
                         f"python run.py with "
                         f"data_root={data_root} "
+                        f"dataset={dataset} "
                         f"num_gpus=1 num_nodes=1 per_gpu_batchsize=32 "
                         f"{task} "
                         f"exp_name={exp_name} "
@@ -87,8 +88,9 @@ if __name__ == "__main__":
                         f"test_type={missing_type} "
                         f"seed={seed} "
                         f"max_epoch={max_epochs} "
-                        f"with_food_vocab "
                     )
                     print(f"Running: {cmd}")
                     
                     result = os.system(cmd)
+                    if result != 0:
+                        exit(result)
