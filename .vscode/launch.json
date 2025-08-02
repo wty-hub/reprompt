@@ -19,9 +19,8 @@
                 "num_nodes=1",
                 "per_gpu_batchsize=32",
                 "task_finetune_food101",
-                "exp_name=retrieve-prompt-food101-0.9-both",
-                "test_ratio=0.9",
-                "test_type=both",
+                "test_ratio=0.5",
+                "test_type=image",
                 "seed=12351",
                 "max_epoch=10"
             ]

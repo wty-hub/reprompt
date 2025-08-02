@@ -360,9 +360,10 @@ class FeatureBank:
         self.missing_ratio = missing_ratio
         self.missing_table_root = './datasets/missing_tables/'
         self.missing_tables = {}
-        self.missing_tables['train'] = torch.load(os.path.join(self.missing_table_root, f'{dataset_name}_train_missing_{missing_scenario}_07.pt'))
         missing_ratio_str = f"{int(missing_ratio * 10):02d}"
 
+        self.missing_tables['train'] = torch.load(os.path.join(self.missing_table_root,
+                                                                f'{dataset_name}_train_missing_{missing_scenario}_07.pt'))
         if self.dataset_name == 'mmimdb':
             self.missing_tables['val'] = torch.load(
                 os.path.join(self.missing_table_root, f'mmimdb_dev_missing_{missing_scenario}_{missing_ratio_str}.pt'))

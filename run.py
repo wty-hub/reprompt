@@ -1,10 +1,10 @@
 import os
 import copy
+from clip.modules.clip_missing_aware_prompt_module import CLIPransformerSS
 from torchmetrics.functional import f1_score
 import pytorch_lightning as pl
 
 from clip.config import ex
-from clip.modules import CLIPransformerSS
 from clip.datamodules.multitask_datamodule import MTDataModule
 import shutil
 
