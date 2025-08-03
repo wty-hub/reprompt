@@ -209,7 +209,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-datasets/missing_tables
+# datasets/missing_tables
 
 result/
 result_model_files/
