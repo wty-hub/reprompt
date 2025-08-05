@@ -99,10 +99,9 @@ pattern = rf'{Path.cwd().name}-(mmimdb|food101|hatememes)-(-?\d+\.\d+)-(both|ima
 
 # 数据集s
 datasets = [
-    # "mmimdb",
+    "mmimdb",
     "food101",
-    # "hatememes"
-    # "Hatefull_Memes",
+    "hatememes"
 ]
 # 缺失率s
 ratios = [
@@ -111,7 +110,7 @@ ratios = [
     0.9
     ]
 # 缺失类型
-types = ["image", "text", "both"]
+types = ["text", "image", "both"]
 
 max_value = {}
 max_path = {}

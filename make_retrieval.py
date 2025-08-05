@@ -11,9 +11,9 @@ def main():
     """Main function to run retrieval without importing problematic modules."""
     # Check if datasets exist
     datasets_info = {
-        # 'mmimdb': '../arrow_datasets/mmimdb',
-        'food101': '../arrow_datasets/Food101',
-        # 'hatememes': '../arrow_datasets/hateful_memes'
+        'mmimdb': '../arrow_datasets/mmimdb',
+        # 'food101': '../arrow_datasets/Food101',
+        'hatememes': '../arrow_datasets/hateful_memes'
     }
     
     ratios = [0.5, 0.7, 0.9]
@@ -33,7 +33,7 @@ def main():
     
     for dataset_name in datasets_info.keys():
         for scenario in scenarios:
-            for ratio in ratios:
+            # for ratio in ratios:
                 if dataset_name not in datasets_info:
                     print(f"Unknown dataset: {dataset_name}")
                     return
@@ -43,12 +43,12 @@ def main():
                     print(f"Dataset directory not found: {data_dir}")
                     return
                 
-                bnk = FeatureBank(dataset_name, data_dir, scenario, ratio, True)
-                for split in splits:
-                    text_tokens = bnk.get_text_tokens(torch.randint(0, len(bnk), (100,)))
-                    print(f'text_tokens.shape: {text_tokens.shape}')
-                    image_tokens = bnk.get_image_tokens(torch.randint(0, len(bnk), (100,)))
-                    print(f'image_tokens.shape: {image_tokens.shape}')
+                bnk = FeatureBank(dataset_name, data_dir, scenario, 0.7, remake=True)
+                # for split in splits:
+                #     text_tokens = bnk.get_text_tokens(torch.randint(0, len(bnk), (100,)))
+                #     print(f'text_tokens.shape: {text_tokens.shape}')
+                #     image_tokens = bnk.get_image_tokens(torch.randint(0, len(bnk), (100,)))
+                #     print(f'image_tokens.shape: {image_tokens.shape}')
 
 if __name__ == '__main__':
     main()
