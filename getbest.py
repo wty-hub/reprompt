@@ -94,6 +94,8 @@ def find_max_value(path, column):
 import math
 import os
 import re
+import argparse
+import shutil
 
 pattern = rf'{Path.cwd().name}-(mmimdb|food101|hatememes)-(-?\d+\.\d+)-(both|image|text).*'
 
@@ -139,6 +141,28 @@ for root, dirs, files in os.walk("result"):
                     if cur_max > max_value[dataset][ratio][type]:
                         max_value[dataset][ratio][type] = cur_max
                         max_path[dataset][ratio][type] = root
+                        
+
+parser = argparse.ArgumentParser(description='Find best metrics and optionally delete worse results')
+parser.add_argument('--delete', action='store_true', help='Delete directories with non-max metric values', default=False)
+args = parser.parse_args()
+
+
+if args.delete:
+    # Find all paths that don't have maximum values and delete them
+    for dataset in datasets:
+        for ratio in ratios:
+            for type in types:
+                best_path = max_path[dataset][ratio][type]
+                if best_path:  # Only if we found a valid best path
+                    # Find all similar runs
+                    for root, dirs, files in os.walk("result"):
+                        mtch = re.search(pattern, root)
+                        if mtch and mtch.group(1) == dataset and float(mtch.group(2)) == ratio and mtch.group(3) == type and 'metrics.csv' == file:
+                            if root != best_path:
+                                print(f"Deleting {root} (keeping {best_path})")
+                                shutil.rmtree(root)
+
 
 for dataset in max_value:
     print(f'\n=== {dataset} ===')

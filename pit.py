@@ -57,29 +57,31 @@ args = parser.parse_args()
 current_dataset = args.dataset
 
 while True:
-    for r in ratios:
-        for t in types:
-            prompt_length = random.randint(20, 45)
-            seed = random.randint(0, 10086)
-            augmented_length = random.randint(1, prompt_length // 2)
-            data_root = data_roots[current_dataset]
-            task = tasks[current_dataset]
-            batch_size = random.randint(16, 48)
-            max_epochs = 15 if dataset == 'food101' else 7
-            exp_name = f'{current_dir_name}-{current_dataset}-{r}-{t}_pLen={prompt_length}_aLen={augmented_length}-batch_size={batch_size}'
-            cmd = (
-                f"python run.py with "
-                f"data_root={data_root} "
-                f"dataset={current_dataset} "
-                f"num_gpus=1 num_nodes=1 per_gpu_batchsize={batch_size} "
-                f"{task} "
-                f"exp_name={exp_name} "
-                f"test_ratio={r} "
-                f"test_type={t} "
-                f"seed={seed} "
-                f"max_epoch={max_epochs} "
-            )
-            print(f'Running {cmd}')
-            result = os.system(cmd)
-            if result != 0:
-                exit(result)
+    # for r in ratios:
+        # for t in types:
+    r = random.choice(ratios)
+    t = random.choice(types)
+    prompt_length = random.randint(16, 32)
+    seed = random.randint(0, 10086)
+    augmented_length = random.randint(1, 4)
+    data_root = data_roots[current_dataset]
+    task = tasks[current_dataset]
+    batch_size = random.randint(12, 30)
+    max_epochs = 15 if dataset == 'food101' else 7
+    exp_name = f'{current_dir_name}-{current_dataset}-{r}-{t}_pLen={prompt_length}_aLen={augmented_length}-batch_size={batch_size}'
+    cmd = (
+        f"python run.py with "
+        f"data_root={data_root} "
+        f"dataset={current_dataset} "
+        f"num_gpus=1 num_nodes=1 per_gpu_batchsize={batch_size} "
+        f"{task} "
+        f"exp_name={exp_name} "
+        f"test_ratio={r} "
+        f"test_type={t} "
+        f"seed={seed} "
+        f"max_epoch={max_epochs} "
+    )
+    print(f'Running {cmd}')
+    result = os.system(cmd)
+    if result != 0:
+        exit(result)
