@@ -123,24 +123,24 @@ for dataset in datasets:
     for ratio in ratios:
         max_value[dataset][ratio] = {}
         max_path[dataset][ratio] = {}
-        for type in types:
-            max_value[dataset][ratio][type] = -math.inf
-            max_path[dataset][ratio][type] = ""
+        for t in types:
+            max_value[dataset][ratio][t] = -math.inf
+            max_path[dataset][ratio][t] = ""
 
 
-for root, dirs, files in os.walk("result"):
-    mtch = re.search(pattern, root)
+for dir, dirs, files in os.walk("result"):
+    mtch = re.search(pattern, dir)
     if mtch:
         dataset = mtch.group(1)
         ratio = float(mtch.group(2))
-        type = mtch.group(3)
+        t = mtch.group(3)
         for file in files:
             if 'metrics.csv' == file:
-                cur_max = find_max_value(os.path.join(root, file), 'val/the_metric')
+                cur_max = find_max_value(os.path.join(dir, file), 'val/the_metric')
                 if cur_max is not None:
-                    if cur_max > max_value[dataset][ratio][type]:
-                        max_value[dataset][ratio][type] = cur_max
-                        max_path[dataset][ratio][type] = root
+                    if cur_max > max_value[dataset][ratio][t]:
+                        max_value[dataset][ratio][t] = cur_max
+                        max_path[dataset][ratio][t] = dir
                         
 
 parser = argparse.ArgumentParser(description='Find best metrics and optionally delete worse results')
@@ -149,29 +149,41 @@ args = parser.parse_args()
 
 
 if args.delete:
+    print("WARNING: You are about to delete directories with non-maximum metric values.")
+    confirmation = input("Type 'yes' to confirm deletion: ")
+    if confirmation.lower() != 'yes':
+        print("Deletion cancelled.")
+        exit(0)
+    print("Proceeding with deletion...")
     # Find all paths that don't have maximum values and delete them
     for dataset in datasets:
         for ratio in ratios:
-            for type in types:
-                best_path = max_path[dataset][ratio][type]
+            for t in types:
+                best_path = max_path[dataset][ratio][t]
                 if best_path:  # Only if we found a valid best path
                     # Find all similar runs
-                    for root, dirs, files in os.walk("result"):
-                        mtch = re.search(pattern, root)
-                        if mtch and mtch.group(1) == dataset and float(mtch.group(2)) == ratio and mtch.group(3) == type and 'metrics.csv' == file:
-                            if root != best_path:
-                                print(f"Deleting {root} (keeping {best_path})")
-                                shutil.rmtree(root)
-
+                    # for root, dirs, files in os.walk("result"):
+                    for dir in os.listdir("result"):
+                        mtch = re.search(pattern, dir)
+                        if mtch and mtch.group(1) == dataset and float(mtch.group(2)) == ratio and mtch.group(3) == t:
+                            if dir not in best_path:
+                                print(f"Deleting {dir} (keeping {best_path})")
+                                shutil.rmtree(os.path.join("result", dir))
+                    for dir in os.listdir("result_model_files/result"):
+                        mtch = re.search(pattern, dir)
+                        if mtch and mtch.group(1) == dataset and float(mtch.group(2)) == ratio and mtch.group(3) == t:
+                            if dir not in best_path:
+                                print(f"Deleting {dir} (keeping {best_path})")
+                                shutil.rmtree(os.path.join("result_model_files/result", dir))
 
 for dataset in max_value:
     print(f'\n=== {dataset} ===')
     for ratio in max_value[dataset]:
         print(f'  Ratio {ratio}:')
-        for type in max_value[dataset][ratio]:
-            value = max_value[dataset][ratio][type]
-            path = max_path[dataset][ratio][type]
+        for t in max_value[dataset][ratio]:
+            value = max_value[dataset][ratio][t]
+            path = max_path[dataset][ratio][t]
             if value > -math.inf:
-                print(f'    {type}: {value*100:.2f} -> {path}')
+                print(f'    {t}: {value*100:.2f} -> {path}')
             else:
-                print(f'    {type}: No data found')
+                print(f'    {t}: No data found')

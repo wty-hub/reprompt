@@ -36,6 +36,13 @@ iccv_values = [
     66.41, 64.93, 68.09, 63.70, 66.79, 65.57, 66.23, 64.66, 66.74
 ]
 
+beaten = {
+    'mmimdb': {
+        (0.5, 'text'),
+        (0.7, 'text')
+    }
+}
+
 best = {}
 i = 0
 for dataset in tasks:
@@ -61,12 +68,15 @@ while True:
         # for t in types:
     r = random.choice(ratios)
     t = random.choice(types)
+    if (r, t) in beaten[current_dataset]:
+        print(f'{(r, t)} is beaten')
+        continue
     prompt_length = random.randint(16, 32)
     seed = random.randint(0, 10086)
-    augmented_length = random.randint(1, 4)
+    augmented_length = random.randint(1, 5)
     data_root = data_roots[current_dataset]
     task = tasks[current_dataset]
-    batch_size = random.randint(12, 30)
+    batch_size = random.randint(16, 32)
     max_epochs = 15 if dataset == 'food101' else 7
     exp_name = f'{current_dir_name}-{current_dataset}-{r}-{t}_pLen={prompt_length}_aLen={augmented_length}-batch_size={batch_size}'
     cmd = (
